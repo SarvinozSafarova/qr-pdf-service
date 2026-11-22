@@ -10,7 +10,7 @@
             background: #f9fafb;
             color: #111827;
             margin: 0;
-            padding: 20px;
+            padding: 16px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -21,27 +21,27 @@
         .card {
             background: #fff;
             border-radius: 16px;
-            padding: 24px 18px;
+            padding: 20px 16px;
             width: 100%;
-            max-width: 420px;
+            max-width: 440px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.06);
         }
         h1 {
             font-size: 20px;
             margin-top: 0;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
         p {
-            font-size: 14px;
+            font-size: 13px;
             color: #6b7280;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
         .btn-yellow {
             background: #ffcc00;
             color: #000;
             border: none;
             border-radius: 12px;
-            padding: 15px 20px;
+            padding: 14px 18px;
             font-size: 15px;
             font-weight: 600;
             width: 100%;
@@ -53,8 +53,8 @@
             color: #111827;
             border: 1px solid #d1d5db;
             border-radius: 12px;
-            padding: 14px 20px;
-            font-size: 15px;
+            padding: 13px 18px;
+            font-size: 14px;
             font-weight: 500;
             width: 100%;
             cursor: pointer;
@@ -62,15 +62,20 @@
         }
         #cameraBox {
             display: none;
-            margin-top: 12px;
-            margin-bottom: 12px;
+            margin-top: 10px;
+            margin-bottom: 10px;
         }
         video {
             width: 100%;
             border-radius: 12px;
             background: #000;
-            max-height: 340px;
-            object-fit: cover;
+            max-height: 420px;
+            object-fit: contain;
+        }
+        .cam-tip {
+            font-size: 12px;
+            color: #4b5563;
+            margin-top: 6px;
         }
         .cam-actions {
             display: flex;
@@ -78,14 +83,14 @@
             margin-top: 10px;
         }
         .status {
-            margin-top: 14px;
-            font-size: 15px;
+            margin-top: 12px;
+            font-size: 14px;
             font-weight: 500;
             color: #059669;
         }
         .loader {
             display: none;
-            margin-top: 12px;
+            margin-top: 10px;
             color: #d97706;
             font-size: 14px;
         }
@@ -95,7 +100,7 @@
 
 <div class="card">
     <h1>Отправка на компьютер</h1>
-    <p>Снимите документ прямо здесь (в галерею не сохранится) или выберите готовое фото.</p>
+    <p>Съёмка идёт напрямую на ПК (в галерею не сохраняется). Также можно выбрать готовое фото.</p>
 
     <button class="btn-yellow" onclick="openCamera()">Сфотографировать</button>
 
@@ -106,6 +111,7 @@
 
     <div id="cameraBox">
         <video id="video" autoplay playsinline></video>
+        <div class="cam-tip">Держите телефон ровно над листом и подождите 1–2 сек, пока сфокусируется текст</div>
         <canvas id="canvas" style="display: none;"></canvas>
         <div class="cam-actions">
             <button class="btn-yellow" style="margin-bottom: 0;" onclick="takePhoto()">Снять и отправить</button>
@@ -113,7 +119,7 @@
         </div>
     </div>
 
-    <div id="loader" class="loader">Отправка на компьютер...</div>
+    <div id="loader" class="loader">Отправка и обработка документа...</div>
     <div id="status" class="status"></div>
 </div>
 
@@ -131,14 +137,28 @@
         status.textContent = '';
         try {
             stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { ideal: "environment" } },
+                video: {
+                    facingMode: { ideal: "environment" },
+                    width: { ideal: 3840 },
+                    height: { ideal: 2160 },
+                    focusMode: { ideal: "continuous" }
+                },
                 audio: false
             });
             video.srcObject = stream;
             cameraBox.style.display = 'block';
         } catch (err) {
-            status.style.color = '#dc2626';
-            status.textContent = 'Не удалось открыть камеру в браузере. Разрешите доступ к камере или выберите готовое фото.';
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: "environment" } },
+                    audio: false
+                });
+                video.srcObject = stream;
+                cameraBox.style.display = 'block';
+            } catch (err2) {
+                status.style.color = '#dc2626';
+                status.textContent = 'Не удалось открыть камеру. Разрешите доступ к камере в настройках браузера.';
+            }
         }
     }
 
@@ -156,13 +176,15 @@
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         canvas.toBlob(async (blob) => {
             if (!blob) return;
             const file = new File([blob], "camera_photo.jpg", { type: "image/jpeg" });
             await sendFiles([file]);
-        }, "image/jpeg", 0.9);
+        }, "image/jpeg", 0.95);
     }
 
     input.addEventListener('change', async (e) => {
@@ -195,7 +217,7 @@
                 status.textContent = `Отправлено фото: ${data.uploaded} шт. Можно добавить ещё!`;
             } else {
                 status.style.color = '#dc2626';
-                status.textContent = 'Не удалось обработать фото. Попробуйте другое фото.';
+                status.textContent = 'Не удалось обработать фото. Попробуйте ещё раз.';
             }
         } catch (err) {
             loader.style.display = 'none';
@@ -206,4 +228,4 @@
 </script>
 
 </body>
-</html>    
+</html>
