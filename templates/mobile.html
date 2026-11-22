@@ -63,12 +63,50 @@
             display: none;
             margin-top: 12px;
         }
+        .camera-stage {
+            position: relative;
+            width: 100%;
+            height: 440px;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
         video {
             width: 100%;
-            border-radius: 12px;
-            background: #000;
-            max-height: 440px;
+            height: 100%;
             object-fit: contain;
+        }
+        .a4-guide {
+            position: absolute;
+            pointer-events: none;
+            /* Пропорции листа A4: 1 : 1.414 */
+            width: 62%;
+            aspect-ratio: 1 / 1.414;
+            max-height: 88%;
+            border: 2px dashed rgba(255, 204, 0, 0.95);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+            border-radius: 6px;
+        }
+        .a4-badge {
+            position: absolute;
+            top: -24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.72);
+            color: #ffcc00;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            white-space: nowrap;
+        }
+        .cam-hint {
+            font-size: 12px;
+            color: #4b5563;
+            margin-top: 8px;
         }
         .cam-actions {
             display: flex;
@@ -95,17 +133,21 @@
     <h1>Отправка на компьютер</h1>
     <p>Съёмка идёт сразу на ПК без сохранения в телефон.</p>
 
-    <!-- Кнопка 1: Сфотографировать -->
     <button class="btn-yellow" onclick="openCamera()">Сфотографировать</button>
 
-    <!-- Кнопка 2: Выбрать фото -->
     <input type="file" id="mobileInput" accept="image/*" multiple style="display: none;">
     <button class="btn-secondary" onclick="document.getElementById('mobileInput').click()">
         Выбрать фото
     </button>
 
     <div id="cameraBox">
-        <video id="video" autoplay playsinline></video>
+        <div class="camera-stage">
+            <video id="video" autoplay playsinline></video>
+            <div class="a4-guide" id="a4Guide">
+                <span class="a4-badge">Формат A4</span>
+            </div>
+        </div>
+        <div class="cam-hint">Подведите лист A4 под пунктирную рамку и нажмите «Снять и отправить»</div>
         <canvas id="canvas" style="display: none;"></canvas>
         <div class="cam-actions">
             <button class="btn-yellow" style="margin-bottom: 0;" onclick="takePhoto()">Снять и отправить</button>
@@ -125,10 +167,27 @@
     const cameraBox = document.getElementById('cameraBox');
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
+    const a4Guide = document.getElementById('a4Guide');
     let stream = null;
+
+    function updateGuideOrientation() {
+        const isLandscape = window.innerWidth > window.innerHeight;
+        if (isLandscape) {
+            a4Guide.style.aspectRatio = "1.414 / 1";
+            a4Guide.style.width = "70%";
+            a4Guide.style.maxHeight = "78%";
+        } else {
+            a4Guide.style.aspectRatio = "1 / 1.414";
+            a4Guide.style.width = "62%";
+            a4Guide.style.maxHeight = "88%";
+        }
+    }
+
+    window.addEventListener("resize", updateGuideOrientation);
 
     async function openCamera() {
         status.textContent = '';
+        updateGuideOrientation();
         try {
             stream = await navigator.mediaDevices.getUserMedia({
                 video: {
