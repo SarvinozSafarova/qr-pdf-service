@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Загрузка документов в PDF</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: #ffffff;
+            color: #222;
+            margin: 0;
+            padding: 40px;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: flex;
+            gap: 40px;
+            align-items: flex-start;
+        }
+        .left-panel {
+            flex: 1;
+        }
+        .right-panel {
+            width: 300px;
+            border-left: 1px solid #e5e7eb;
+            padding-left: 40px;
+            text-align: center;
+        }
+        h2 {
+            font-size: 20px;
+            font-weight: 500;
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+        .upload-box {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            background: #fafafa;
+        }
+        .upload-label {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 12px;
+            display: block;
+        }
+        .btn-yellow {
+            background-color: #ffcc00;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: inline-block;
+        }
+        .btn-yellow:hover {
+            background-color: #f2c200;
+        }
+        .btn-yellow:disabled {
+            background-color: #fef08a;
+            color: #9ca3af;
+            cursor: not-allowed;
+        }
+        .btn-clear {
+            background: none;
+            border: 1px solid #d1d5db;
+            color: #4b5563;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 10px;
+            width: 100%;
+        }
+        .btn-clear:hover {
+            background: #f3f4f6;
+        }
+        .qr-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 16px;
+            background: #fff;
+        }
+        .qr-card img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .qr-hint {
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 16px;
+        }
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .file-item {
+            position: relative;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 3/4;
+            background: #f9fafb;
+        }
+        .file-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .file-num {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            background: rgba(0,0,0,0.65);
+            color: #fff;
+            font-size: 12px;
+            padding: 2px 7px;
+            border-radius: 6px;
+        }
+        .file-del {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: rgba(220, 38, 38, 0.85);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+        }
+        .empty-state {
+            color: #9ca3af;
+            font-size: 14px;
+            padding: 30px 0;
+            text-align: center;
+        }
+        @media (max-width: 768px) {
+            .container { flex-direction: column; padding: 20px; }
+            .right-panel { width: 100%; border-left: none; padding-left: 0; border-top: 1px solid #eee; padding-top: 24px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="left-panel">
+        <h2>Через компьютер</h2>
+        <div class="upload-box">
+            <span class="upload-label">Добавьте фотографии документов (с ПК или через QR-код справа)</span>
+            <input type="file" id="pcFileInput" accept="image/*" multiple style="display: none;">
+            <button class="btn-yellow" onclick="document.getElementById('pcFileInput').click()">Загрузить фото</button>
+        </div>
+
+        <div id="filesContainer" class="file-grid"></div>
+        <div id="emptyState" class="empty-state">Загруженных страниц пока нет. Отсканируйте QR-код телефоном или выберите файлы с ПК.</div>
+    </div>
+
+    <div class="right-panel">
+        <h2>Через телефон</h2>
+        <div class="qr-hint">Просканируйте QR-код для загрузки документов</div>
+        <div class="qr-card">
+            <img src="/api/qr/{{ session_id }}" alt="QR-код для загрузки">
+        </div>
+        <button id="downloadPdfBtn" class="btn-yellow" style="width: 100%;" disabled onclick="downloadPdf()">
+            Скачать PDF (0 стр.)
+        </button>
+        <button id="clearBtn" class="btn-clear" style="display: none;" onclick="clearSession()">
+            Очистить и удалить файлы
+        </button>
+    </div>
+</div>
+
+<script>
+    const sessionId = "{{ session_id }}";
+    let currentFiles = [];
+
+    // Загрузка файлов напрямую с ПК
+    document.getElementById('pcFileInput').addEventListener('change', async (e) => {
+        if (!e.target.files.length) return;
+        const formData = new FormData();
+        for (const file of e.target.files) {
+            formData.append('files', file);
+        }
+        await fetch(`/api/upload/${sessionId}`, { method: 'POST', body: formData });
+        e.target.value = '';
+        fetchFiles();
+    });
+
+    // Проверка новых фото с сервера каждые 2 секунды
+    async function fetchFiles() {
+        try {
+            const res = await fetch(`/api/files/${sessionId}`);
+            const data = await res.json();
+            if (JSON.stringify(data.files) !== JSON.stringify(currentFiles)) {
+                currentFiles = data.files;
+                renderFiles();
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function renderFiles() {
+        const container = document.getElementById('filesContainer');
+        const empty = document.getElementById('emptyState');
+        const pdfBtn = document.getElementById('downloadPdfBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        container.innerHTML = '';
+        if (currentFiles.length === 0) {
+            empty.style.display = 'block';
+            pdfBtn.disabled = true;
+            pdfBtn.textContent = 'Скачать PDF (0 стр.)';
+            clearBtn.style.display = 'none';
+            return;
+        }
+
+        empty.style.display = 'none';
+        pdfBtn.disabled = false;
+        pdfBtn.textContent = `Получить PDF (${currentFiles.length} стр.)`;
+        clearBtn.style.display = 'block';
+
+        currentFiles.forEach((filename, index) => {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = `
+                <span class="file-num">${index + 1}</span>
+                <button class="file-del" title="Удалить" onclick="deleteFile('${filename}')">&times;</button>
+                <img src="/api/preview/${sessionId}/${filename}" alt="Страница ${index + 1}">
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    async function deleteFile(filename) {
+        await fetch(`/api/files/${sessionId}/${filename}`, { method: 'DELETE' });
+        fetchFiles();
+    }
+
+    function downloadPdf() {
+        window.location.href = `/api/pdf/${sessionId}`;
+    }
+
+    async function clearSession() {
+        await fetch(`/api/clear/${sessionId}`, { method: 'POST' });
+        fetchFiles();
+    }
+
+    setInterval(fetchFiles, 2000);
+    fetchFiles();
+</script>
+
+</body>
+</html>
