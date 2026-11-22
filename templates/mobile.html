@@ -10,53 +10,82 @@
             background: #f9fafb;
             color: #111827;
             margin: 0;
-            padding: 24px;
+            padding: 20px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 90vh;
+            min-height: 92vh;
             text-align: center;
         }
         .card {
             background: #fff;
             border-radius: 16px;
-            padding: 28px 20px;
+            padding: 24px 18px;
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.06);
         }
         h1 {
             font-size: 20px;
             margin-top: 0;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
         p {
             font-size: 14px;
             color: #6b7280;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
-        .btn-upload {
+        .btn-yellow {
             background: #ffcc00;
             color: #000;
             border: none;
             border-radius: 12px;
-            padding: 16px 24px;
-            font-size: 16px;
+            padding: 15px 20px;
+            font-size: 15px;
             font-weight: 600;
             width: 100%;
             cursor: pointer;
+            margin-bottom: 10px;
+        }
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #111827;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+            padding: 14px 20px;
+            font-size: 15px;
+            font-weight: 500;
+            width: 100%;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        #cameraBox {
+            display: none;
+            margin-top: 12px;
             margin-bottom: 12px;
         }
+        video {
+            width: 100%;
+            border-radius: 12px;
+            background: #000;
+            max-height: 340px;
+            object-fit: cover;
+        }
+        .cam-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
         .status {
-            margin-top: 16px;
+            margin-top: 14px;
             font-size: 15px;
             font-weight: 500;
             color: #059669;
         }
         .loader {
             display: none;
-            margin-top: 14px;
+            margin-top: 12px;
             color: #d97706;
             font-size: 14px;
         }
@@ -65,13 +94,24 @@
 <body>
 
 <div class="card">
-    <h1>Загрузка документов</h1>
-    <p>Выберите фото из галереи или сделайте снимок камерой. Они сразу появятся на экране компьютера.</p>
+    <h1>Отправка на компьютер</h1>
+    <p>Снимите документ прямо здесь (в галерею не сохранится) или выберите готовое фото.</p>
+
+    <button class="btn-yellow" onclick="openCamera()">Сфотографировать</button>
 
     <input type="file" id="mobileInput" accept="image/*" multiple style="display: none;">
-    <button class="btn-upload" onclick="document.getElementById('mobileInput').click()">
-        Выбрать или сфотографировать
+    <button class="btn-secondary" onclick="document.getElementById('mobileInput').click()">
+        Выбрать готовое фото
     </button>
+
+    <div id="cameraBox">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas" style="display: none;"></canvas>
+        <div class="cam-actions">
+            <button class="btn-yellow" style="margin-bottom: 0;" onclick="takePhoto()">Снять и отправить</button>
+            <button class="btn-secondary" style="margin-bottom: 0;" onclick="closeCamera()">Закрыть</button>
+        </div>
+    </div>
 
     <div id="loader" class="loader">Отправка на компьютер...</div>
     <div id="status" class="status"></div>
@@ -82,15 +122,63 @@
     const input = document.getElementById('mobileInput');
     const loader = document.getElementById('loader');
     const status = document.getElementById('status');
+    const cameraBox = document.getElementById('cameraBox');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    let stream = null;
+
+    async function openCamera() {
+        status.textContent = '';
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: "environment" } },
+                audio: false
+            });
+            video.srcObject = stream;
+            cameraBox.style.display = 'block';
+        } catch (err) {
+            status.style.color = '#dc2626';
+            status.textContent = 'Не удалось открыть камеру в браузере. Разрешите доступ к камере или выберите готовое фото.';
+        }
+    }
+
+    function closeCamera() {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+        }
+        cameraBox.style.display = 'none';
+    }
+
+    async function takePhoto() {
+        if (!video.videoWidth || !video.videoHeight) return;
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob(async (blob) => {
+            if (!blob) return;
+            const file = new File([blob], "camera_photo.jpg", { type: "image/jpeg" });
+            await sendFiles([file]);
+        }, "image/jpeg", 0.9);
+    }
 
     input.addEventListener('change', async (e) => {
         if (!e.target.files.length) return;
+        const files = Array.from(e.target.files);
+        input.value = '';
+        await sendFiles(files);
+    });
 
+    async function sendFiles(files) {
         loader.style.display = 'block';
+        status.style.color = '#059669';
         status.textContent = '';
 
         const formData = new FormData();
-        for (const file of e.target.files) {
+        for (const file of files) {
             formData.append('files', file);
         }
 
@@ -101,15 +189,21 @@
             });
             const data = await res.json();
             loader.style.display = 'none';
-            status.textContent = `Успешно отправлено фото: ${data.uploaded} шт. Можно добавить ещё!`;
-            input.value = '';
+
+            if (data.uploaded > 0) {
+                status.style.color = '#059669';
+                status.textContent = `Отправлено фото: ${data.uploaded} шт. Можно добавить ещё!`;
+            } else {
+                status.style.color = '#dc2626';
+                status.textContent = 'Не удалось обработать фото. Попробуйте другое фото.';
+            }
         } catch (err) {
             loader.style.display = 'none';
             status.style.color = '#dc2626';
-            status.textContent = 'Ошибка при отправке. Попробуйте ещё раз.';
+            status.textContent = 'Ошибка при отправке. Проверьте интернет и попробуйте снова.';
         }
-    });
+    }
 </script>
 
 </body>
-</html>
+</html>    
