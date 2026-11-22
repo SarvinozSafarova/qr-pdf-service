@@ -24,21 +24,21 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Время жизни сессии в секундах (15 минут)
 SESSION_TTL = 900
 
-# Размер A4 при ~210 DPI — баланс чёткости мелкого шрифта и компактного веса PDF
-A4_WIDTH = 1754
-A4_HEIGHT = 2480
+# Формат A4 (~220 DPI): мелкий шрифт читается чётко, а PDF остаётся компактным
+A4_WIDTH = 1840
+A4_HEIGHT = 2600
 
 
 def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
-  """Делает строгий 'документ-скан' на формате A4: чистый фон и чёткий текст."""
+  """Приводит фото документа к читаемому виду на листе A4 без потери мелких букв."""
   img = ImageOps.exif_transpose(img)
   if img.mode != "RGB":
     img = img.convert("RGB")
 
-  # 1. Выравниваем неравномерное освещение и тени по всей странице
+  # 1. Мягко выравниваем неравномерную засветку и тени
   bg = img.copy()
   bg.thumbnail((160, 160), Image.Resampling.BILINEAR)
-  bg = bg.filter(ImageFilter.GaussianBlur(radius=18))
+  bg = bg.filter(ImageFilter.GaussianBlur(radius=16))
   bg = bg.resize(img.size, Image.Resampling.BILINEAR)
 
   bg_gray = bg.convert("L")
@@ -53,29 +53,27 @@ def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
       r, g, b = src_px[x, y]
       br, bg_c, bb = bg_px[x, y]
 
-      # Сильнее выравниваем фон (90%), оставляя 10% естественности
       nr = min(255.0, max(0.0, (r * mean_bg) / max(1, br)))
       ng = min(255.0, max(0.0, (g * mean_bg) / max(1, bg_c)))
       nb = min(255.0, max(0.0, (b * mean_bg) / max(1, bb)))
 
-      mr = 0.90 * nr + 0.10 * r
-      mg = 0.90 * ng + 0.10 * g
-      mb = 0.90 * nb + 0.10 * b
+      # 75% выравнивания фона сохраняют читаемость и не съедают тонкие штрихи
+      mr = 0.75 * nr + 0.25 * r
+      mg = 0.75 * ng + 0.25 * g
+      mb = 0.75 * nb + 0.25 * b
 
-      # Лёгкая «дочистка» почти белого фона, чтобы бумага выглядела как скан
-      if mr > 228 and mg > 228 and mb > 228:
+      if mr > 236 and mg > 236 and mb > 236:
         src_px[x, y] = (255, 255, 255)
       else:
         src_px[x, y] = (int(mr), int(mg), int(mb))
 
-  # 2. Подтягиваем контраст и резкость для мелкого шрифта договоров
-  img = ImageOps.autocontrast(img, cutoff=0.5)
-  img = ImageEnhance.Contrast(img).enhance(1.3)
-  img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=125, threshold=2))
+  # 2. Умеренный контраст и деликатная резкость для текста
+  img = ImageEnhance.Contrast(img).enhance(1.18)
+  img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=105, threshold=2))
 
-  # 3. Вписываем в лист A4 с полями
+  # 3. Вписываем страницу в чистый лист A4 с аккуратными полями
   canvas = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-  margin = 60
+  margin = 50
   max_w = A4_WIDTH - margin * 2
   max_h = A4_HEIGHT - margin * 2
 
@@ -148,7 +146,7 @@ async def get_qr_code(request: Request, session_id: str):
 
 @app.post("/api/upload/{session_id}")
 async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
-  """Принимает фото с телефона, делает эффект сканера A4 и сохраняет компактно."""
+  """Принимает фото с телефона, готовит страницу A4 и сохраняет компактно."""
   session_path = UPLOAD_DIR / session_id
   if not session_path.exists():
     session_path.mkdir(parents=True, exist_ok=True)
@@ -163,7 +161,7 @@ async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
       page_img = scan_enhance_to_a4(raw_img)
 
       filename = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}.jpg"
-      page_img.save(session_path / filename, "JPEG", quality=76, optimize=True)
+      page_img.save(session_path / filename, "JPEG", quality=80, optimize=True)
       saved_count += 1
     except Exception:
       continue
