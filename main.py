@@ -29,21 +29,97 @@ A4_WIDTH = 1840
 A4_HEIGHT = 2600
 
 
+def trim_extra_margins(img: Image.Image) -> Image.Image:
+    """Обрезает лишние внешние края вокруг документа, оставляя небольшой безопасный отступ."""
+    w, h = img.size
+    if w < 100 or h < 100:
+        return img
+
+    # Уменьшаем копию для быстрого поиска границ документа
+    probe = img.copy()
+    probe.thumbnail((400, 400), Image.Resampling.BILINEAR)
+    gray = probe.convert("L")
+    pw, ph = gray.size
+    px = gray.load()
+
+    # Оцениваем яркость фона по краям кадра
+    border_vals = []
+    for x in range(pw):
+        border_vals.append(px[x, 2])
+        border_vals.append(px[x, ph - 3])
+    for y in range(ph):
+        border_vals.append(px[2, y])
+        border_vals.append(px[pw - 3, y])
+    bg_level = sum(border_vals) / max(1, len(border_vals))
+
+    # Ищем границы, где картинка заметно отличается от внешнего фона
+    threshold = max(18.0, min(45.0, bg_level * 0.16))
+
+    top, bottom, left, right = 0, ph - 1, 0, pw - 1
+
+    for y in range(ph):
+        row_diff = sum(abs(px[x, y] - bg_level) for x in range(pw)) / pw
+        if row_diff > threshold * 0.45:
+            top = y
+            break
+
+    for y in range(ph - 1, -1, -1):
+        row_diff = sum(abs(px[x, y] - bg_level) for x in range(pw)) / pw
+        if row_diff > threshold * 0.45:
+            bottom = y
+            break
+
+    for x in range(pw):
+        col_diff = sum(abs(px[x, y] - bg_level) for y in range(ph)) / ph
+        if col_diff > threshold * 0.45:
+            left = x
+            break
+
+    for x in range(pw - 1, -1, -1):
+        col_diff = sum(abs(px[x, y] - bg_level) for y in range(ph)) / ph
+        if col_diff > threshold * 0.45:
+            right = x
+            break
+
+    # Проверяем, что найденная область не слишком маленькая
+    if right - left < pw * 0.35 or bottom - top < ph * 0.35:
+        return img
+
+    # Переводим координаты обратно в исходный размер и добавляем небольшой отступ (3%)
+    scale_x = w / pw
+    scale_y = h / ph
+    pad_x = int(w * 0.03)
+    pad_y = int(h * 0.03)
+
+    crop_left = max(0, int(left * scale_x) - pad_x)
+    crop_top = max(0, int(top * scale_y) - pad_y)
+    crop_right = min(w, int((right + 1) * scale_x) + pad_x)
+    crop_bottom = min(h, int((bottom + 1) * scale_y) + pad_y)
+
+    if crop_right - crop_left > 100 and crop_bottom - crop_top > 100:
+        return img.crop((crop_left, crop_top, crop_right, crop_bottom))
+
+    return img
+
+
 def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
-    """Быстрая обработка фото документа в чёткий лист A4 без потери шрифта."""
+    """Быстрая обработка фото документа с автообрезкой краёв и вписыванием в лист A4."""
     img = ImageOps.exif_transpose(img)
     if img.mode != "RGB":
         img = img.convert("RGB")
 
-    # Мягко выравниваем контраст и яркость за доли секунды (без медленных циклов)
+    # 1. Подрезаем лишние края вокруг листа
+    img = trim_extra_margins(img)
+
+    # 2. Мягко выравниваем контраст, яркость и резкость текста
     img = ImageOps.autocontrast(img, cutoff=0.8)
     img = ImageEnhance.Brightness(img).enhance(1.06)
     img = ImageEnhance.Contrast(img).enhance(1.22)
     img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=115, threshold=2))
 
-    # Вписываем в лист A4 с аккуратными белыми полями
+    # 3. Вписываем в лист A4 с аккуратными белыми полями
     canvas = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-    margin = 50
+    margin = 40
     max_w = A4_WIDTH - margin * 2
     max_h = A4_HEIGHT - margin * 2
 
@@ -117,7 +193,7 @@ async def get_qr_code(request: Request, session_id: str):
 
 @app.post("/api/upload/{session_id}")
 async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
-    """Принимает фото с телефона, быстро готовит лист A4 и сохраняет в хорошем качестве."""
+    """Принимает фото с телефона, обрезает лишние края, готовит лист A4 и сохраняет."""
     session_path = UPLOAD_DIR / session_id
     if not session_path.exists():
         session_path.mkdir(parents=True, exist_ok=True)
