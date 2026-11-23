@@ -66,7 +66,7 @@
         .camera-stage {
             position: relative;
             width: 100%;
-            height: 440px;
+            height: 460px;
             border-radius: 12px;
             overflow: hidden;
             background: #000;
@@ -79,23 +79,31 @@
             height: 100%;
             object-fit: contain;
         }
-        .a4-guide {
+        .a4-overlay-wrap {
             position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             pointer-events: none;
-            /* Пропорции листа A4: 1 : 1.414 */
-            width: 62%;
+        }
+        .a4-guide {
+            position: relative;
+            pointer-events: none;
+            width: 74%;
             aspect-ratio: 1 / 1.414;
-            max-height: 88%;
+            max-height: 90%;
             border: 2px dashed rgba(255, 204, 0, 0.95);
-            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.38);
             border-radius: 6px;
+            box-sizing: border-box;
         }
         .a4-badge {
             position: absolute;
-            top: -24px;
+            top: -22px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.72);
+            background: rgba(0, 0, 0, 0.75);
             color: #ffcc00;
             font-size: 11px;
             font-weight: 600;
@@ -141,13 +149,15 @@
     </button>
 
     <div id="cameraBox">
-        <div class="camera-stage">
+        <div class="camera-stage" id="cameraStage">
             <video id="video" autoplay playsinline></video>
-            <div class="a4-guide" id="a4Guide">
-                <span class="a4-badge">Формат A4</span>
+            <div class="a4-overlay-wrap">
+                <div class="a4-guide" id="a4Guide">
+                    <span class="a4-badge">Формат A4</span>
+                </div>
             </div>
         </div>
-        <div class="cam-hint">Подведите лист A4 под пунктирную рамку и нажмите «Снять и отправить»</div>
+        <div class="cam-hint">Лишнее за жёлтой рамкой срежется автоматически</div>
         <canvas id="canvas" style="display: none;"></canvas>
         <div class="cam-actions">
             <button class="btn-yellow" style="margin-bottom: 0;" onclick="takePhoto()">Снять и отправить</button>
@@ -165,6 +175,7 @@
     const loader = document.getElementById('loader');
     const status = document.getElementById('status');
     const cameraBox = document.getElementById('cameraBox');
+    const cameraStage = document.getElementById('cameraStage');
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const a4Guide = document.getElementById('a4Guide');
@@ -174,12 +185,12 @@
         const isLandscape = window.innerWidth > window.innerHeight;
         if (isLandscape) {
             a4Guide.style.aspectRatio = "1.414 / 1";
-            a4Guide.style.width = "70%";
-            a4Guide.style.maxHeight = "78%";
+            a4Guide.style.width = "72%";
+            a4Guide.style.maxHeight = "80%";
         } else {
             a4Guide.style.aspectRatio = "1 / 1.414";
-            a4Guide.style.width = "62%";
-            a4Guide.style.maxHeight = "88%";
+            a4Guide.style.width = "74%";
+            a4Guide.style.maxHeight = "90%";
         }
     }
 
@@ -224,14 +235,45 @@
     }
 
     async function takePhoto() {
-        if (!video.videoWidth || !video.videoHeight) return;
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!vw || !vh) return;
 
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        const stageRect = cameraStage.getBoundingClientRect();
+        const guideRect = a4Guide.getBoundingClientRect();
+
+        const videoRatio = vw / vh;
+        const stageRatio = stageRect.width / stageRect.height;
+
+        let renderW, renderH, renderLeft, renderTop;
+        if (videoRatio > stageRatio) {
+            renderW = stageRect.width;
+            renderH = stageRect.width / videoRatio;
+            renderLeft = stageRect.left;
+            renderTop = stageRect.top + (stageRect.height - renderH) / 2;
+        } else {
+            renderH = stageRect.height;
+            renderW = stageRect.height * videoRatio;
+            renderLeft = stageRect.left + (stageRect.width - renderW) / 2;
+            renderTop = stageRect.top;
+        }
+
+        const relLeft = Math.max(0, (guideRect.left - renderLeft) / renderW);
+        const relTop = Math.max(0, (guideRect.top - renderTop) / renderH);
+        const relRight = Math.min(1, (guideRect.right - renderLeft) / renderW);
+        const relBottom = Math.min(1, (guideRect.bottom - renderTop) / renderH);
+
+        const sx = Math.floor(relLeft * vw);
+        const sy = Math.floor(relTop * vh);
+        const sw = Math.max(10, Math.floor((relRight - relLeft) * vw));
+        const sh = Math.max(10, Math.floor((relBottom - relTop) * vh));
+
+        canvas.width = sw;
+        canvas.height = sh;
         const ctx = canvas.getContext('2d');
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
 
         canvas.toBlob(async (blob) => {
             if (!blob) return;
