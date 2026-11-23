@@ -24,9 +24,9 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Время жизни сессии в секундах (15 минут)
 SESSION_TTL = 900
 
-# Формат A4 (~220 DPI) для хранения исходной чёткой страницы
-A4_WIDTH = 1840
-A4_HEIGHT = 2600
+# Оптимальный формат A4: чёткий текст и меньшая нагрузка на память/CPU
+A4_WIDTH = 1480
+A4_HEIGHT = 2094
 
 # Максимальный размер итогового PDF: 1 МБ (1 048 576 байт)
 MAX_PDF_BYTES = 1024 * 1024
@@ -41,10 +41,10 @@ def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
     img = ImageOps.autocontrast(img, cutoff=0.8)
     img = ImageEnhance.Brightness(img).enhance(1.06)
     img = ImageEnhance.Contrast(img).enhance(1.22)
-    img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=115, threshold=2))
+    img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=110, threshold=2))
 
     canvas = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-    margin = 36
+    margin = 32
     max_w = A4_WIDTH - margin * 2
     max_h = A4_HEIGHT - margin * 2
 
@@ -53,7 +53,7 @@ def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
     new_w = max(1, int(w * ratio))
     new_h = max(1, int(h * ratio))
 
-    resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
     offset_x = (A4_WIDTH - new_w) // 2
     offset_y = (A4_HEIGHT - new_h) // 2
     canvas.paste(resized, (offset_x, offset_y))
@@ -62,17 +62,13 @@ def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
 
 
 def build_pdf_under_limit(image_files: List[Path], max_bytes: int = MAX_PDF_BYTES) -> bytes:
-    """Собирает PDF и автоматически подбирает параметры, чтобы вес был меньше 1 МБ."""
+    """Быстро собирает PDF размером меньше 1 МБ за минимальное число шагов."""
     raw_pages = [Image.open(f).convert("RGB") for f in image_files]
 
-    # Ступени (масштаб страницы, качество JPEG, DPI) от более чёткого к более компактному
     profiles = [
-        (1.0, 75, 150.0),
-        (1.0, 60, 140.0),
-        (0.85, 55, 130.0),
-        (0.75, 48, 120.0),
-        (0.65, 42, 110.0),
-        (0.55, 35, 96.0),
+        (1.0, 62, 130.0),
+        (0.78, 48, 115.0),
+        (0.60, 36, 96.0),
     ]
 
     best_bytes = b""
@@ -83,13 +79,12 @@ def build_pdf_under_limit(image_files: List[Path], max_bytes: int = MAX_PDF_BYTE
             if scale < 1.0:
                 nw = max(1, int(page.width * scale))
                 nh = max(1, int(page.height * scale))
-                p = page.resize((nw, nh), Image.Resampling.LANCZOS)
+                p = page.resize((nw, nh), Image.Resampling.BILINEAR)
             else:
                 p = page
 
-            # Прогоняем через JPEG в памяти, чтобы точно контролировать размер PDF
             jpg_buf = io.BytesIO()
-            p.save(jpg_buf, format="JPEG", quality=jpeg_quality, optimize=True)
+            p.save(jpg_buf, format="JPEG", quality=jpeg_quality, optimize=False)
             jpg_buf.seek(0)
             encoded_pages.append(Image.open(jpg_buf))
 
@@ -182,7 +177,7 @@ async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
             page_img = scan_enhance_to_a4(raw_img)
 
             filename = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}.jpg"
-            page_img.save(session_path / filename, "JPEG", quality=85, optimize=True)
+            page_img.save(session_path / filename, "JPEG", quality=82, optimize=False)
             saved_count += 1
         except Exception:
             continue
