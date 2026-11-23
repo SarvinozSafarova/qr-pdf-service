@@ -24,102 +24,27 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Время жизни сессии в секундах (15 минут)
 SESSION_TTL = 900
 
-# Формат A4 (~220 DPI): чёткий текст и быстрая сборка
+# Формат A4 (~220 DPI) для хранения исходной чёткой страницы
 A4_WIDTH = 1840
 A4_HEIGHT = 2600
 
-
-def trim_extra_margins(img: Image.Image) -> Image.Image:
-    """Обрезает лишние внешние края вокруг документа, оставляя небольшой безопасный отступ."""
-    w, h = img.size
-    if w < 100 or h < 100:
-        return img
-
-    # Уменьшаем копию для быстрого поиска границ документа
-    probe = img.copy()
-    probe.thumbnail((400, 400), Image.Resampling.BILINEAR)
-    gray = probe.convert("L")
-    pw, ph = gray.size
-    px = gray.load()
-
-    # Оцениваем яркость фона по краям кадра
-    border_vals = []
-    for x in range(pw):
-        border_vals.append(px[x, 2])
-        border_vals.append(px[x, ph - 3])
-    for y in range(ph):
-        border_vals.append(px[2, y])
-        border_vals.append(px[pw - 3, y])
-    bg_level = sum(border_vals) / max(1, len(border_vals))
-
-    # Ищем границы, где картинка заметно отличается от внешнего фона
-    threshold = max(18.0, min(45.0, bg_level * 0.16))
-
-    top, bottom, left, right = 0, ph - 1, 0, pw - 1
-
-    for y in range(ph):
-        row_diff = sum(abs(px[x, y] - bg_level) for x in range(pw)) / pw
-        if row_diff > threshold * 0.45:
-            top = y
-            break
-
-    for y in range(ph - 1, -1, -1):
-        row_diff = sum(abs(px[x, y] - bg_level) for x in range(pw)) / pw
-        if row_diff > threshold * 0.45:
-            bottom = y
-            break
-
-    for x in range(pw):
-        col_diff = sum(abs(px[x, y] - bg_level) for y in range(ph)) / ph
-        if col_diff > threshold * 0.45:
-            left = x
-            break
-
-    for x in range(pw - 1, -1, -1):
-        col_diff = sum(abs(px[x, y] - bg_level) for y in range(ph)) / ph
-        if col_diff > threshold * 0.45:
-            right = x
-            break
-
-    # Проверяем, что найденная область не слишком маленькая
-    if right - left < pw * 0.35 or bottom - top < ph * 0.35:
-        return img
-
-    # Переводим координаты обратно в исходный размер и добавляем небольшой отступ (3%)
-    scale_x = w / pw
-    scale_y = h / ph
-    pad_x = int(w * 0.03)
-    pad_y = int(h * 0.03)
-
-    crop_left = max(0, int(left * scale_x) - pad_x)
-    crop_top = max(0, int(top * scale_y) - pad_y)
-    crop_right = min(w, int((right + 1) * scale_x) + pad_x)
-    crop_bottom = min(h, int((bottom + 1) * scale_y) + pad_y)
-
-    if crop_right - crop_left > 100 and crop_bottom - crop_top > 100:
-        return img.crop((crop_left, crop_top, crop_right, crop_bottom))
-
-    return img
+# Максимальный размер итогового PDF: 1 МБ (1 048 576 байт)
+MAX_PDF_BYTES = 1024 * 1024
 
 
 def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
-    """Быстрая обработка фото документа с автообрезкой краёв и вписыванием в лист A4."""
+    """Быстрая обработка фото документа с вписыванием в лист A4."""
     img = ImageOps.exif_transpose(img)
     if img.mode != "RGB":
         img = img.convert("RGB")
 
-    # 1. Подрезаем лишние края вокруг листа
-    img = trim_extra_margins(img)
-
-    # 2. Мягко выравниваем контраст, яркость и резкость текста
     img = ImageOps.autocontrast(img, cutoff=0.8)
     img = ImageEnhance.Brightness(img).enhance(1.06)
     img = ImageEnhance.Contrast(img).enhance(1.22)
     img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=115, threshold=2))
 
-    # 3. Вписываем в лист A4 с аккуратными белыми полями
     canvas = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-    margin = 40
+    margin = 36
     max_w = A4_WIDTH - margin * 2
     max_h = A4_HEIGHT - margin * 2
 
@@ -134,6 +59,55 @@ def scan_enhance_to_a4(img: Image.Image) -> Image.Image:
     canvas.paste(resized, (offset_x, offset_y))
 
     return canvas
+
+
+def build_pdf_under_limit(image_files: List[Path], max_bytes: int = MAX_PDF_BYTES) -> bytes:
+    """Собирает PDF и автоматически подбирает параметры, чтобы вес был меньше 1 МБ."""
+    raw_pages = [Image.open(f).convert("RGB") for f in image_files]
+
+    # Ступени (масштаб страницы, качество JPEG, DPI) от более чёткого к более компактному
+    profiles = [
+        (1.0, 75, 150.0),
+        (1.0, 60, 140.0),
+        (0.85, 55, 130.0),
+        (0.75, 48, 120.0),
+        (0.65, 42, 110.0),
+        (0.55, 35, 96.0),
+    ]
+
+    best_bytes = b""
+
+    for scale, jpeg_quality, dpi in profiles:
+        encoded_pages = []
+        for page in raw_pages:
+            if scale < 1.0:
+                nw = max(1, int(page.width * scale))
+                nh = max(1, int(page.height * scale))
+                p = page.resize((nw, nh), Image.Resampling.LANCZOS)
+            else:
+                p = page
+
+            # Прогоняем через JPEG в памяти, чтобы точно контролировать размер PDF
+            jpg_buf = io.BytesIO()
+            p.save(jpg_buf, format="JPEG", quality=jpeg_quality, optimize=True)
+            jpg_buf.seek(0)
+            encoded_pages.append(Image.open(jpg_buf))
+
+        pdf_buf = io.BytesIO()
+        encoded_pages[0].save(
+            pdf_buf,
+            format="PDF",
+            save_all=True,
+            append_images=encoded_pages[1:],
+            resolution=dpi,
+        )
+        pdf_data = pdf_buf.getvalue()
+        best_bytes = pdf_data
+
+        if len(pdf_data) < max_bytes:
+            return pdf_data
+
+    return best_bytes
 
 
 async def cleanup_old_sessions():
@@ -193,7 +167,7 @@ async def get_qr_code(request: Request, session_id: str):
 
 @app.post("/api/upload/{session_id}")
 async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
-    """Принимает фото с телефона, обрезает лишние края, готовит лист A4 и сохраняет."""
+    """Принимает фото с телефона, готовит лист A4 и сохраняет."""
     session_path = UPLOAD_DIR / session_id
     if not session_path.exists():
         session_path.mkdir(parents=True, exist_ok=True)
@@ -250,7 +224,7 @@ async def delete_single_file(session_id: str, filename: str):
 
 @app.get("/api/pdf/{session_id}")
 async def generate_pdf(session_id: str):
-    """Собирает все загруженные фото в один многостраничный PDF."""
+    """Собирает все загруженные фото в PDF размером меньше 1 МБ."""
     session_path = UPLOAD_DIR / session_id
     if not session_path.exists():
         raise HTTPException(status_code=404, detail="Сессия не найдена")
@@ -261,26 +235,10 @@ async def generate_pdf(session_id: str):
     if not image_files:
         raise HTTPException(status_code=400, detail="Нет загруженных фотографий")
 
-    images = []
-    for f in image_files:
-        img = Image.open(f).convert("RGB")
-        images.append(img)
-
-    pdf_buf = io.BytesIO()
-    first_image = images[0]
-    rest_images = images[1:]
-
-    first_image.save(
-        pdf_buf,
-        format="PDF",
-        save_all=True,
-        append_images=rest_images,
-        resolution=150.0,
-    )
-    pdf_buf.seek(0)
+    pdf_bytes = build_pdf_under_limit(image_files, MAX_PDF_BYTES)
 
     return StreamingResponse(
-        pdf_buf,
+        io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="documents.pdf"'},
     )
