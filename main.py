@@ -233,7 +233,7 @@ async def generate_pdf(session_id: str):
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="documents.pdf"'},
+        headers={"Content-Disposition": 'attachment; filename="flower.pdf"'},
     )
 
 
